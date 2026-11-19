@@ -1,3 +1,28 @@
+# RoboTest 仿真接入（Windows x64）
+
+本 fork 提供 `robottest_vision.exe`，用于在 RoboTest 中调试原框架的云台跟踪与游戏内发射。Unity 发送可见装甲板的四个归一化角点，以及同帧的相机姿态、云台参考系和模拟炮口状态。程序使用上游 **135 × 56 mm** 小装甲板模板做 PnP 解算，再由原框架的 `Tracker`、标准 `Aimer` 和 `Shooter` 返回绝对偏航、俯仰及游戏内发射许可。仿真入口通过 TCP 通信，角点由 Unity 提供。
+
+## 构建与启动
+
+Windows 目标依赖 OpenCV 4（`core`、`calib3d`）、Eigen3、fmt、spdlog 和 yaml-cpp。OpenCV 放在本仓库的 `build/robottest-deps/opencv` 时可自动发现，也可通过 `OpenCV_DIR` 指定配置文件所在目录。其余依赖可通过 vcpkg 或 `CMAKE_PREFIX_PATH` 提供。
+
+```powershell
+cmake -S . -B build/robottest -G 'Visual Studio 18 2026' -A x64
+cmake --build build/robottest --config Release --target robottest_vision
+.\build\robottest\bin\Release\robottest_vision.exe
+```
+
+运行目录中的 `robottest_aim.yaml` 提供仿真参数。确保程序能从 EXE 所在目录或 `PATH` 加载对应的 OpenCV、fmt、spdlog 和 yaml-cpp DLL。[Windows 构建说明](sim/README.md)
+
+## 在 RoboTest 中调试
+
+- 程序默认监听 `127.0.0.1:5600`。使用 `--port PORT` 改端口时，须同步修改 Unity 的 `Simulation Camera Port`。
+- RMUC27 和 RMUL27 3v3 默认开启 **外部自瞄程序**，可在比赛设置关闭。玩家操控哨兵或各步兵机型时，按住自瞄键启用外部跟踪和游戏内发射，松开后恢复手动操作。
+- 联机客机向主机提交通用云台目标角和发射请求，自瞄开关及按键状态留在本地。发射受游戏内射速、弹量、热量和裁判规则约束。
+- 当前通信版本为 v4。Unity 发送 `RBOB` 观测，C++ 返回 `RBTS` 指令。请搭配支持 v4 的 RoboTest，字段偏移见 RoboTest 仓库的 `Docs/SimulationCameraStream.md`。
+
+---
+
 # 同济大学SuperPower战队25赛季自瞄算法开源
 
 ## 本项目亮点
