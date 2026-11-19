@@ -1,23 +1,19 @@
 #include <windows.h>
 
 #include <atomic>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
-#include <filesystem>
 #include <iostream>
 #include <limits>
-#include <memory>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/core.hpp>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "camera_receiver.hpp"
-
-#ifdef SP_VISION_SIM_DETECTOR
-#include <chrono>
-#include <opencv2/opencv.hpp>
-
-#include "tasks/auto_aim/yolos/yolov5.hpp"
-#include "tools/img_tools.hpp"
-#endif
 
 namespace
 {
@@ -32,171 +28,171 @@ BOOL WINAPI handle_console_event(DWORD event)
   return FALSE;
 }
 
-struct Options
+std::uint16_t read_port(int argc, char ** argv)
 {
-  std::uint16_t port = 5600;
-  std::uint64_t max_frames = 0;
-  bool receive_only = false;
-  bool preview = true;
-  std::filesystem::path config;
-  std::filesystem::path video;
+  if (argc == 1) {
+    return 5600;
+  }
+  if (argc != 3 || std::string(argv[1]) != "--port") {
+    throw std::invalid_argument("Usage: robottest_vision [--port PORT]");
+  }
+  const std::string value = argv[2];
+  if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos) {
+    throw std::invalid_argument("Port must be between 1 and 65535");
+  }
+  const auto port = std::stoul(value);
+  if (port == 0 || port > std::numeric_limits<std::uint16_t>::max()) {
+    throw std::invalid_argument("Port must be between 1 and 65535");
+  }
+  return static_cast<std::uint16_t>(port);
+}
+
+struct CameraPose
+{
+  cv::Vec3d position;
+  cv::Vec3d rotation_vector;
 };
 
-std::uint64_t parse_integer(const std::string & value, const std::string & option)
+struct Solution
 {
-  if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos) {
-    throw std::invalid_argument("Expected a nonnegative integer for " + option);
-  }
-  return std::stoull(value);
-}
+  const sim::ArmorObservation * armor;
+  cv::Vec3d position;
+  cv::Vec3d camera_rotation_vector;
+  double distance;
+};
 
-Options parse_options(int argc, char ** argv)
+std::optional<CameraPose> solve(const sim::ArmorObservation & armor)
 {
-  Options options;
-  for (int i = 1; i < argc; ++i) {
-    const std::string option = argv[i];
-    if (option == "--receive-only") {
-      options.receive_only = true;
-    } else if (option == "--no-preview") {
-      options.preview = false;
-    } else if (
-      option == "--port" || option == "--max-frames" || option == "--config" ||
-      option == "--video") {
-      if (++i >= argc) {
-        throw std::invalid_argument("Missing value for " + option);
-      }
-      if (option == "--port") {
-        const auto port = parse_integer(argv[i], option);
-        if (port == 0 || port > std::numeric_limits<std::uint16_t>::max()) {
-          throw std::invalid_argument("Port must be between 1 and 65535");
-        }
-        options.port = static_cast<std::uint16_t>(port);
-      } else if (option == "--max-frames") {
-        options.max_frames = parse_integer(argv[i], option);
-      } else if (option == "--config") {
-        options.config = std::filesystem::absolute(argv[i]);
-      } else {
-        options.video = std::filesystem::absolute(argv[i]);
-      }
-    } else {
-      throw std::invalid_argument("Unknown option " + option);
+  std::vector<cv::Point3d> model;
+  std::vector<cv::Point2d> image;
+  model.reserve(armor.corners.size());
+  image.reserve(armor.corners.size());
+  for (const auto & corner : armor.corners) {
+    if (
+      !std::isfinite(corner.image_x) || !std::isfinite(corner.image_y) ||
+      !std::isfinite(corner.model_x) || !std::isfinite(corner.model_y)) {
+      return std::nullopt;
     }
+    model.emplace_back(corner.model_x, corner.model_y, 0);
+    image.emplace_back(corner.image_x, corner.image_y);
   }
-  return options;
-}
 
-#ifdef SP_VISION_SIM_DETECTOR
-std::filesystem::path executable_directory()
-{
-  std::wstring path(32768, L'\0');
-  const auto length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
-  if (length == 0 || length == path.size()) {
-    throw std::runtime_error("Could not determine executable directory");
+  std::vector<cv::Vec3d> rotations;
+  std::vector<cv::Vec3d> translations;
+  try {
+    cv::solvePnPGeneric(
+      model, image, cv::Matx33d::eye(), cv::noArray(), rotations, translations, false,
+      cv::SOLVEPNP_IPPE);
+  } catch (const cv::Exception &) {
+    return std::nullopt;
   }
-  path.resize(length);
-  return std::filesystem::path(path).parent_path();
-}
-#endif
 
-void print_frame(const sim::CameraFrame & frame)
-{
-  std::cout << "frame=" << frame.id << " capture_us=" << frame.capture_time_us
-            << " size=" << frame.width << "x" << frame.height;
-}
-
-int run(Options options)
-{
-#ifndef SP_VISION_SIM_DETECTOR
-  if (!options.config.empty() || !options.video.empty()) {
-    throw std::invalid_argument("Config and video input require SP_VISION_SIM_DETECTOR");
-  }
-  options.receive_only = true;
-#else
-  std::unique_ptr<auto_aim::YOLOV5> detector;
-  if (!options.receive_only) {
-    std::filesystem::current_path(executable_directory());
-    if (options.config.empty()) {
-      options.config = "vision.yaml";
+  for (std::size_t i = 0; i < translations.size(); ++i) {
+    const auto & position = translations[i];
+    if (!cv::checkRange(position) || position[2] <= 0 || !cv::checkRange(rotations[i])) {
+      continue;
     }
-    detector = std::make_unique<auto_aim::YOLOV5>(options.config.string(), false);
-  }
-
-  cv::VideoCapture video;
-  if (!options.video.empty() && !video.open(options.video.string())) {
-    throw std::runtime_error("Could not open video " + options.video.string());
-  }
-  const bool preview = options.preview;
-  constexpr char window[] = "RoboTest Vision";
-  bool preview_opened = false;
-#endif
-
-  std::unique_ptr<sim::CameraReceiver> receiver;
-  if (options.video.empty()) {
-    receiver = std::make_unique<sim::CameraReceiver>(options.port);
-    std::cerr << "Waiting for RoboTest on 127.0.0.1:" << options.port << '\n';
-  }
-
-  std::uint64_t processed = 0;
-  while (!stop_requested && (options.max_frames == 0 || processed < options.max_frames)) {
-    auto frame = receiver ? receiver->wait_for_frame() : std::nullopt;
-    if (frame) {
-      print_frame(*frame);
-    }
-
-#ifdef SP_VISION_SIM_DETECTOR
-    cv::Mat image;
-    if (frame) {
-      image = cv::Mat(frame->height, frame->width, CV_8UC3, frame->bgr.data());
-    } else if (!receiver) {
-      if (!video.read(image)) {
+    cv::Matx33d rotation;
+    cv::Rodrigues(rotations[i], rotation);
+    bool in_front = true;
+    for (const auto & point : model) {
+      if (position[2] + rotation(2, 0) * point.x + rotation(2, 1) * point.y <= 0) {
+        in_front = false;
         break;
       }
-      std::cout << "frame=" << processed + 1 << " video_ms=" << video.get(cv::CAP_PROP_POS_MSEC)
-                << " size=" << image.cols << "x" << image.rows;
+    }
+    if (in_front) {
+      return CameraPose{position, rotations[i]};
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<cv::Vec3d> to_world(const sim::CameraFrame & frame, const cv::Vec3d & camera)
+{
+  const auto & q = frame.camera_rotation;
+  const cv::Vec4d rotation(q[0], q[1], q[2], q[3]);
+  const double norm = cv::norm(rotation);
+  const auto & p = frame.camera_position;
+  const cv::Vec3d origin(p[0], p[1], p[2]);
+  if (!std::isfinite(norm) || norm < 0.5 || norm > 1.5 || !cv::checkRange(origin)) {
+    return std::nullopt;
+  }
+
+  // OpenCV uses +Y down. The transmitted quaternion rotates Unity camera-local axes.
+  const cv::Vec3d local(camera[0], -camera[1], camera[2]);
+  const cv::Vec3d axis(q[0] / norm, q[1] / norm, q[2] / norm);
+  const cv::Vec3d cross = 2.0 * axis.cross(local);
+  return origin + local + (q[3] / norm) * cross + axis.cross(cross);
+}
+
+int run(std::uint16_t port)
+{
+  sim::CameraReceiver receiver(port);
+  std::cerr << "Waiting for RoboTest corner observations on 127.0.0.1:" << port << '\n';
+  std::uint64_t connection = 0;
+  std::optional<std::uint64_t> tracked_id;
+
+  while (!stop_requested) {
+    const auto frame = receiver.wait_for_frame();
+    if (!frame) {
+      continue;
+    }
+    if (frame->connection_id != connection) {
+      connection = frame->connection_id;
+      tracked_id.reset();
     }
 
-    if (!image.empty()) {
-      if (detector) {
-        const auto started = std::chrono::steady_clock::now();
-        const auto detections = detector->detect(image, -1);
-        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-          std::chrono::steady_clock::now() - started);
-        std::cout << " detections=" << detections.size() << " inference_us=" << elapsed.count();
-        for (const auto & armor : detections) {
-          std::cout << " [" << auto_aim::COLORS.at(armor.color) << " "
-                    << auto_aim::ARMOR_NAMES.at(armor.name) << " " << armor.confidence;
-          for (const auto & point : armor.points) {
-            std::cout << " " << point.x << "," << point.y;
-          }
-          std::cout << "]";
-          if (preview) {
-            tools::draw_points(image, armor.points, {0, 255, 0});
-          }
-        }
+    const auto start = std::chrono::steady_clock::now();
+    sim::PoseStatus status;
+    std::optional<Solution> target;
+    for (const auto & armor : frame->armors) {
+      const auto camera = solve(armor);
+      if (!camera) {
+        continue;
       }
-      if (preview) {
-        cv::imshow(window, image);
-        preview_opened = true;
+      const auto world = to_world(*frame, camera->position);
+      const double distance = cv::norm(camera->position);
+      if (
+        !world || !cv::checkRange(*world) || !std::isfinite(distance) ||
+        distance > std::numeric_limits<float>::max()) {
+        continue;
       }
-      if (!frame) {
-        ++processed;
-        std::cout << std::endl;
+      ++status.solved;
+      if (
+        !target || tracked_id == armor.id ||
+        (tracked_id != target->armor->id && distance < target->distance)) {
+        target = Solution{&armor, *world, camera->rotation_vector, distance};
       }
-    }
-#endif
-
-    if (frame) {
-      ++processed;
-      std::cout << std::endl;
     }
 
-#ifdef SP_VISION_SIM_DETECTOR
-    if (
-      preview_opened &&
-      (cv::waitKey(1) == 27 || cv::getWindowProperty(window, cv::WND_PROP_VISIBLE) < 1)) {
-      break;
+    std::cout << "frame=" << frame->id << " capture_us=" << frame->capture_time_us
+              << " observed=" << frame->armors.size() << " solved=" << status.solved;
+    if (target) {
+      const auto & armor = *target->armor;
+      tracked_id = armor.id;
+      status.target_id = armor.id;
+      status.distance = static_cast<float>(target->distance);
+      for (std::size_t i = 0; i < status.world_position.size(); ++i) {
+        status.world_position[i] = static_cast<float>(target->position[static_cast<int>(i)]);
+        status.camera_rotation_vector[i] =
+          static_cast<float>(target->camera_rotation_vector[static_cast<int>(i)]);
+      }
+      std::cout << " target=" << armor.team << "/" << armor.robot << "/" << armor.armor
+                << " distance_m=" << status.distance << " world=" << target->position
+                << " camera_rvec=" << target->camera_rotation_vector;
+    } else {
+      tracked_id.reset();
+      if (!frame->armors.empty()) {
+        status.status = sim::ProgramStatus::processing_error;
+      }
     }
-#endif
+    status.processing_us =
+      static_cast<std::uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                   std::chrono::steady_clock::now() - start)
+                                   .count());
+    receiver.publish_status(*frame, status);
+    std::cout << std::endl;
   }
   return 0;
 }
@@ -205,16 +201,14 @@ int run(Options options)
 int main(int argc, char ** argv)
 {
   if (argc == 2 && std::string(argv[1]) == "--help") {
-    std::cout << "robottest_vision [--port 5600 | --video FILE] [--config FILE]\n"
-                 "                 [--receive-only] [--no-preview] [--max-frames N]\n";
+    std::cout << "robottest_vision [--port PORT]\n";
     return 0;
   }
-
   try {
     if (!SetConsoleCtrlHandler(handle_console_event, TRUE)) {
       throw std::runtime_error("Could not register console stop handler");
     }
-    return run(parse_options(argc, argv));
+    return run(read_port(argc, argv));
   } catch (const std::exception & error) {
     std::cerr << "robottest_vision: " << error.what() << '\n';
     return 1;
