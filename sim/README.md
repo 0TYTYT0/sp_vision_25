@@ -1,6 +1,6 @@
 # RoboTest 装甲板角点解算（Windows x64）
 
-`robottest_vision.exe` 从 RoboTest 接收灯条角点观测，并使用 OpenCV IPPE PnP 解算装甲板。收到的角点已经是归一化成像坐标，模型点来自 Unity 预制体上的实际标记。程序输出解算数量、选中目标的距离、Unity 世界位置和相机坐标下的旋转向量，并通过原 TCP 连接回传。连接和帧号可在控制台查看。
+`robottest_vision.exe` 从 RoboTest 接收灯条角点观测，并使用 OpenCV IPPE PnP 解算装甲板。收到的角点已经是归一化成像坐标，解算使用上游小装甲板模板，灯条间距为 135 mm，灯条长度为 56 mm。程序输出解算数量、选中目标的距离、Unity 世界位置和相机坐标下的旋转向量，并通过原 TCP 连接回传。连接和帧号可在控制台查看。
 
 ## 构建
 

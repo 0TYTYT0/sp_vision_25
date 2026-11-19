@@ -15,7 +15,7 @@ namespace sim
 namespace
 {
 constexpr std::size_t header_size = 52;
-constexpr std::size_t observation_size = 84;
+constexpr std::size_t observation_size = 52;
 constexpr std::size_t status_size = 60;
 constexpr std::uint16_t max_observations = 64;
 
@@ -135,7 +135,7 @@ bool read_frame(SOCKET socket, CameraFrame & frame, const std::atomic_bool & sto
   const auto count = read_little_endian<std::uint16_t>(bytes + 6);
   if (
     header[0] != 'R' || header[1] != 'B' || header[2] != 'O' || header[3] != 'B' ||
-    read_little_endian<std::uint16_t>(bytes + 4) != 1 || count > max_observations) {
+    read_little_endian<std::uint16_t>(bytes + 4) != 2 || count > max_observations) {
     return false;
   }
 
@@ -164,9 +164,8 @@ bool read_frame(SOCKET socket, CameraFrame & frame, const std::atomic_bool & sto
     armor.robot = read_little_endian<std::int32_t>(record + 12);
     armor.armor = read_little_endian<std::int32_t>(record + 16);
     for (std::size_t i = 0; i < armor.corners.size(); ++i) {
-      const auto * point = record + 20 + i * 16;
-      armor.corners[i] = {
-        read_float(point), read_float(point + 4), read_float(point + 8), read_float(point + 12)};
+      const auto * point = record + 20 + i * 8;
+      armor.corners[i] = {read_float(point), read_float(point + 4)};
     }
   }
   return true;

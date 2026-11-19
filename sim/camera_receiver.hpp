@@ -23,8 +23,6 @@ struct Corner
 {
   float image_x;
   float image_y;
-  float model_x;
-  float model_y;
 };
 
 struct ArmorObservation

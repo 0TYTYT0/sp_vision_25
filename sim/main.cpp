@@ -1,5 +1,6 @@
 #include <windows.h>
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -13,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "../tasks/auto_aim/armor_dimensions.hpp"
 #include "camera_receiver.hpp"
 
 namespace
@@ -63,18 +65,20 @@ struct Solution
 
 std::optional<CameraPose> solve(const sim::ArmorObservation & armor)
 {
-  std::vector<cv::Point3d> model;
-  std::vector<cv::Point2d> image;
-  model.reserve(armor.corners.size());
-  image.reserve(armor.corners.size());
-  for (const auto & corner : armor.corners) {
-    if (
-      !std::isfinite(corner.image_x) || !std::isfinite(corner.image_y) ||
-      !std::isfinite(corner.model_x) || !std::isfinite(corner.model_y)) {
+  constexpr double half_width = auto_aim::SMALL_ARMOR_WIDTH / 2;
+  constexpr double half_height = auto_aim::LIGHTBAR_LENGTH / 2;
+  // Match the upstream corner order while keeping the pose reply's right/down axes.
+  static const std::array<cv::Point3d, 4> model{{
+    {-half_width, -half_height, 0}, {half_width, -half_height, 0},
+    {half_width, half_height, 0}, {-half_width, half_height, 0},
+  }};
+  std::array<cv::Point2d, 4> image;
+  for (std::size_t i = 0; i < armor.corners.size(); ++i) {
+    const auto & corner = armor.corners[i];
+    if (!std::isfinite(corner.image_x) || !std::isfinite(corner.image_y)) {
       return std::nullopt;
     }
-    model.emplace_back(corner.model_x, corner.model_y, 0);
-    image.emplace_back(corner.image_x, corner.image_y);
+    image[i] = {corner.image_x, corner.image_y};
   }
 
   std::vector<cv::Vec3d> rotations;
