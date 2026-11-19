@@ -2,6 +2,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <numeric>
 #include <tuple>
 
 #include "tools/logger.hpp"
@@ -10,7 +11,13 @@
 namespace auto_aim
 {
 Tracker::Tracker(const std::string & config_path, Solver & solver)
+: Tracker(config_path, &solver, {1440 / 2, 1080 / 2})
+{
+}
+
+Tracker::Tracker(const std::string & config_path, Solver * solver, cv::Point2f image_center)
 : solver_{solver},
+  image_center_(image_center),
   detect_count_(0),
   temp_lost_count_(0),
   state_{"lost"},
@@ -40,7 +47,9 @@ std::list<Target> Tracker::track(
     state_ = "lost";
   }
   // 过滤掉非我方装甲板
-  armors.remove_if([&](const auto_aim::Armor & a) { return a.color != enemy_color_; });
+  if (use_enemy_color) {
+    armors.remove_if([&](const auto_aim::Armor & a) { return a.color != enemy_color_; });
+  }
 
   // 过滤前哨站顶部装甲板
   // armors.remove_if([this](const auto_aim::Armor & a) {
@@ -50,10 +59,9 @@ std::list<Target> Tracker::track(
   // });
 
   // 优先选择靠近图像中心的装甲板
-  armors.sort([](const Armor & a, const Armor & b) {
-    cv::Point2f img_center(1440 / 2, 1080 / 2);  // TODO
-    auto distance_1 = cv::norm(a.center - img_center);
-    auto distance_2 = cv::norm(b.center - img_center);
+  armors.sort([this](const Armor & a, const Armor & b) {
+    auto distance_1 = cv::norm(a.center - image_center_);
+    auto distance_2 = cv::norm(b.center - image_center_);
     return distance_1 < distance_2;
   });
 
@@ -233,7 +241,9 @@ bool Tracker::set_target(std::list<Armor> & armors, std::chrono::steady_clock::t
   if (armors.empty()) return false;
 
   auto & armor = armors.front();
-  solver_.solve(armor);
+  if (solver_ != nullptr) {
+    solver_->solve(armor);
+  }
 
   // 根据兵种优化初始化参数
   auto is_balance = (armor.type == ArmorType::big) &&
@@ -284,7 +294,9 @@ bool Tracker::update_target(std::list<Armor> & armors, std::chrono::steady_clock
     )
       continue;
 
-    solver_.solve(armor);
+    if (solver_ != nullptr) {
+      solver_->solve(armor);
+    }
 
     target_.update(armor);
   }

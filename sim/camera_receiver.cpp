@@ -5,7 +5,6 @@
 #include <array>
 #include <chrono>
 #include <cstring>
-#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -14,9 +13,9 @@ namespace sim
 {
 namespace
 {
-constexpr std::size_t header_size = 52;
+constexpr std::size_t header_size = 108;
 constexpr std::size_t observation_size = 52;
-constexpr std::size_t status_size = 60;
+constexpr std::size_t status_size = 72;
 constexpr std::uint16_t max_observations = 64;
 
 std::runtime_error socket_error(const char * operation)
@@ -135,13 +134,14 @@ bool read_frame(SOCKET socket, CameraFrame & frame, const std::atomic_bool & sto
   const auto count = read_little_endian<std::uint16_t>(bytes + 6);
   if (
     header[0] != 'R' || header[1] != 'B' || header[2] != 'O' || header[3] != 'B' ||
-    read_little_endian<std::uint16_t>(bytes + 4) != 2 || count > max_observations) {
+    read_little_endian<std::uint16_t>(bytes + 4) != 4 || count > max_observations) {
     return false;
   }
 
   frame.id = read_little_endian<std::uint64_t>(bytes + 8);
   const auto timestamp = read_little_endian<std::uint64_t>(bytes + 16);
-  if (frame.id == 0 || timestamp > std::numeric_limits<std::int64_t>::max()) {
+  if (frame.id == 0 || timestamp > static_cast<std::uint64_t>(
+    std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::duration::max()).count())) {
     return false;
   }
   frame.capture_time_us = static_cast<std::int64_t>(timestamp);
@@ -151,6 +151,15 @@ bool read_frame(SOCKET socket, CameraFrame & frame, const std::atomic_bool & sto
   for (std::size_t i = 0; i < frame.camera_rotation.size(); ++i) {
     frame.camera_rotation[i] = read_float(bytes + 36 + i * 4);
   }
+
+  for (std::size_t i = 0; i < frame.aim_origin.size(); ++i) {
+    frame.aim_origin[i] = read_float(bytes + 52 + i * 4);
+    frame.aim_up[i] = read_float(bytes + 64 + i * 4);
+    frame.aim_forward[i] = read_float(bytes + 76 + i * 4);
+    frame.muzzle_forward[i] = read_float(bytes + 96 + i * 4);
+  }
+  frame.projectile_speed = read_float(bytes + 88);
+  frame.current_yaw = read_float(bytes + 92);
 
   frame.armors.resize(count);
   for (auto & armor : frame.armors) {
@@ -228,7 +237,7 @@ void CameraReceiver::publish_status(const CameraFrame & frame, const PoseStatus 
   }
 
   std::array<std::uint8_t, status_size> packet{'R', 'B', 'T', 'S'};
-  write_little_endian(packet.data() + 4, std::uint16_t{2});
+  write_little_endian(packet.data() + 4, std::uint16_t{4});
   write_little_endian(packet.data() + 6, static_cast<std::uint16_t>(status.status));
   write_little_endian(packet.data() + 8, frame.id);
   write_little_endian(packet.data() + 16, status.solved);
@@ -239,6 +248,10 @@ void CameraReceiver::publish_status(const CameraFrame & frame, const PoseStatus 
     write_float(packet.data() + 36 + i * 4, status.world_position[i]);
     write_float(packet.data() + 48 + i * 4, status.camera_rotation_vector[i]);
   }
+  const std::uint32_t flags = (status.aim_valid ? 1u : 0u) | (status.fire_requested ? 2u : 0u);
+  write_little_endian(packet.data() + 60, flags);
+  write_float(packet.data() + 64, status.yaw);
+  write_float(packet.data() + 68, status.pitch);
   const auto * data = reinterpret_cast<const char *>(packet.data());
   int remaining = static_cast<int>(packet.size());
   while (remaining > 0) {

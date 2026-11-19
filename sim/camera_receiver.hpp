@@ -41,6 +41,12 @@ struct CameraFrame
   std::int64_t capture_time_us = 0;
   std::array<float, 3> camera_position;
   std::array<float, 4> camera_rotation;
+  std::array<float, 3> aim_origin;
+  std::array<float, 3> aim_up;
+  std::array<float, 3> aim_forward;
+  float projectile_speed;
+  float current_yaw;
+  std::array<float, 3> muzzle_forward;
   std::vector<ArmorObservation> armors;
 };
 
@@ -53,6 +59,10 @@ struct PoseStatus
   float distance = 0;
   std::array<float, 3> world_position{};
   std::array<float, 3> camera_rotation_vector{};
+  bool aim_valid = false;
+  bool fire_requested = false;
+  float yaw = 0;
+  float pitch = 0;
 };
 
 class CameraReceiver

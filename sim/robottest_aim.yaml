@@ -1,0 +1,15 @@
+enemy_color: blue
+min_detect_count: 2
+max_temp_lost_count: 3
+outpost_max_temp_lost_count: 5
+yaw_offset: 0.0
+pitch_offset: 0.0
+comming_angle: 70.0
+leaving_angle: 30.0
+high_speed_delay_time: 0.0
+low_speed_delay_time: 0.0
+decision_speed: 10.0
+first_tolerance: 3.0
+second_tolerance: 2.0
+judge_distance: 3.0
+auto_fire: true

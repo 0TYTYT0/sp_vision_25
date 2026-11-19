@@ -9,7 +9,7 @@
 #include "armor.hpp"
 #include "solver.hpp"
 #include "target.hpp"
-#include "tasks/omniperception/perceptron.hpp"
+#include "tasks/omniperception/detection.hpp"
 #include "tools/thread_safe_queue.hpp"
 
 namespace auto_aim
@@ -18,6 +18,7 @@ class Tracker
 {
 public:
   Tracker(const std::string & config_path, Solver & solver);
+  Tracker(const std::string & config_path, Solver * solver, cv::Point2f image_center);
 
   std::string state() const;
 
@@ -30,7 +31,8 @@ public:
     std::chrono::steady_clock::time_point t, bool use_enemy_color = true);
 
 private:
-  Solver & solver_;
+  Solver * solver_;
+  cv::Point2f image_center_;
   Color enemy_color_;
   int min_detect_count_;
   int max_temp_lost_count_;

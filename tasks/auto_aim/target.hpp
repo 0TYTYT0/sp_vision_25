@@ -35,6 +35,7 @@ public:
 
   Eigen::VectorXd ekf_x() const;
   const tools::ExtendedKalmanFilter & ekf() const;
+  Target relative_to(const Eigen::Vector3d & origin) const;
   std::vector<Eigen::Vector4d> armor_xyza_list() const;
 
   bool diverged() const;

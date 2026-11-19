@@ -65,6 +65,15 @@ Target::Target(double x, double vyaw, double radius, double h) : armor_num_(4)
   ekf_ = tools::ExtendedKalmanFilter(x0, P0, x_add);  //初始化滤波器（预测量、预测量协方差）
 }
 
+Target Target::relative_to(const Eigen::Vector3d & origin) const
+{
+  Target relative = *this;
+  relative.ekf_.x[0] -= origin.x();
+  relative.ekf_.x[2] -= origin.y();
+  relative.ekf_.x[4] -= origin.z();
+  return relative;
+}
+
 void Target::predict(std::chrono::steady_clock::time_point t)
 {
   auto dt = tools::delta_time(t, t_);

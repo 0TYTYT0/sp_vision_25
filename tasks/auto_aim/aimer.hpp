@@ -4,8 +4,8 @@
 #include <Eigen/Dense>
 #include <chrono>
 #include <list>
+#include <optional>
 
-#include "io/cboard.hpp"
 #include "io/command.hpp"
 #include "target.hpp"
 
