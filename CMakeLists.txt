@@ -2,6 +2,15 @@ cmake_minimum_required(VERSION 3.16.3)
 
 project(sp_vision)
 
+option(SP_VISION_ROBOTTEST "Build the Windows RoboTest vision application" ${WIN32})
+if(SP_VISION_ROBOTTEST)
+    if(NOT WIN32)
+        message(FATAL_ERROR "SP_VISION_ROBOTTEST requires Windows")
+    endif()
+    add_subdirectory(sim)
+    return()
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_BUILD_TYPE Release)
 message(STATUS "--------------------CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}--------------------")
